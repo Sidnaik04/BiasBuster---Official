@@ -1,0 +1,16 @@
+fastapi
+uvicorn[standard]
+python-multipart
+pydantic
+pandas
+scikit-learn
+joblib
+sqlalchemy[aio]
+asyncpg
+alembic
+python-dotenv
+aiofiles
+python-magic
+chardet
+pydantic-settings
+fairlearn

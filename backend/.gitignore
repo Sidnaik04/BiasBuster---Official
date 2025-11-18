@@ -1,0 +1,131 @@
+# ------------------------
+# Python
+# ------------------------
+__pycache__/
+*.py[cod]
+*.so
+*.pyd
+*.pyo
+
+# Virtual environment
+venv/
+.venv/
+ENV/
+env/
+
+# Pip cache
+pip-wheel-metadata/
+pip-log.txt
+
+# Byte-compiled / optimized / DLL files
+*.pyc
+*.pyo
+*.pyd
+*.pdb
+*.egg-info/
+*.egg
+.eggs/
+
+# Jupyter notebook checkpoints
+.ipynb_checkpoints/
+
+# ------------------------
+# FastAPI / Backend
+# ------------------------
+# Local temp upload directory
+tmp/
+temp/
+tmpfiles/
+uploads/
+biasbuster_uploads/
+**/biasbuster_uploads/
+**/tmp/
+**/temp/
+
+# Our project-specific temp directory
+/tmp/biasbuster_uploads/
+
+# SQLite (if used for local tests)
+*.db
+*.sqlite
+*.sqlite3
+
+# ------------------------
+# ENV / Secrets
+# ------------------------
+.env
+.env.*
+!.env.example
+
+# ------------------------
+# Logs
+# ------------------------
+*.log
+logs/
+**/*.log
+
+# ------------------------
+# IDE / Editor
+# ------------------------
+
+# VSCode
+.vscode/
+.history/
+.code-workspace
+settings.json
+
+# PyCharm
+.idea/
+*.iml
+
+# ------------------------
+# OS-specific
+# ------------------------
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Windows
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# Linux
+*~
+
+# ------------------------
+# Docker
+# ------------------------
+docker-compose.override.yml
+docker-data/
+postgres-data/
+pgdata/
+
+# ------------------------
+# Coverage / Testing
+# ------------------------
+.coverage
+coverage.xml
+htmlcov/
+pytest_cache/
+.pytest_cache/
+.tox/
+.nox/
+.mypy_cache/
+
+# ------------------------
+# Build & Packaging
+# ------------------------
+build/
+dist/
+*.egg-info/
+MANIFEST
+
+# ------------------------
+# Node (if frontend later in repo)
+# ------------------------
+node_modules/
+npm-debug.log
+yarn-error.log
