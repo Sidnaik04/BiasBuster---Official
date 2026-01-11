@@ -8,11 +8,14 @@ from app.models.models import UploadRecord
 from app.utils.dataset_loader import load_dataset
 from app.utils.model_loader import load_model
 from app.utils.prediction import predict_labels
+from app.config import settings
 
 from app.utils.dataset_validation import validate_dataset_health
 from app.utils.target_encoder import encode_target_column
 from app.utils.feature_encoder import encode_features_for_inference
 from app.utils.sensitive_validation import validate_sensitive_columns
+from app.utils.sensitive_preprocessing import bin_age_column
+from app.utils.bootstrap import bootstrap_ci
 
 from app.utils.fairness_metrics import (
     selection_rate,
@@ -83,6 +86,14 @@ async def run_bias_detection(
     sensitive_info = validate_sensitive_columns(df, payload.sensitive_columns)
 
     for col in payload.sensitive_columns:
+        if col.lower() == "age":
+            df = bin_age_column(df, col)
+            payload.sensitive_columns = [
+                c if c != col else col + "_group" for c in payload.sensitive_columns
+            ]
+            break
+
+    for col in payload.sensitive_columns:
         df[col] = df[col].astype(str)
 
     print(df[payload.sensitive_columns].dtypes)
@@ -107,21 +118,59 @@ async def run_bias_detection(
     print("MODEL TYPE:", type(model))
     print("USING PIPELINE:", isinstance(model, Pipeline))
 
+    positive_rate = y_pred.mean()
+
+    if (
+        positive_rate < (1 - settings.PREDICTION_SKEW_THRESHOLD)
+        or positive_rate > settings.PREDICTION_SKEW_THRESHOLD
+    ):
+        warnings.append(
+            "Model predictions are highly skewed towards a single class. "
+            "Fairness metrics may be misleading."
+        )
+
     # -------------------------------------------------
     # STEP 7: Fairness metric computation
     # -------------------------------------------------
     audit_results = {}
+    warnings = []
     bias_driver = None
     max_severity = 0
+    total_rows = len(df)
 
     for sensitive in payload.sensitive_columns:
         group_rates = {}
         group_tprs = {}
 
-        for group in df[sensitive].dropna().unique():
+        group_counts = df[sensitive].value_counts(dropna=False).to_dict()
+
+        for group, count in group_counts.items():
+            # ---------------------------
+            # Warning: Low sample size
+            # ---------------------------
+            if count < settings.MIN_GROUP_SIZE:
+                warnings.append(
+                    f"Group '{group}' in sensitive attribute '{sensitive}' "
+                    f"has low sample size ({count} samples). "
+                    "Fairness metrics may be unstable."
+                )
+
+            # ---------------------------
+            # Warning: Group imbalance
+            # ---------------------------
+            proportion = count / total_rows
+            if proportion < settings.MIN_GROUP_PROPORTION:
+                warnings.append(
+                    f"Group '{group}' in sensitive attribute '{sensitive}' "
+                    f"represents only {proportion:.2%} of the dataset."
+                )
+
             mask = df[sensitive] == group
             y_g = y_true[mask]
             y_p = y_pred[mask]
+
+            if len(y_g) == 0:
+                continue
 
             group_rates[str(group)] = selection_rate(y_p)
             group_tprs[str(group)] = true_positive_rate(y_g, y_p)
@@ -132,12 +181,26 @@ async def run_bias_detection(
 
         decision = evaluate_bias(dpd, eod, dir_ratio)
 
+        dpd_ci = None
+        eod_ci = None
+
+        if settings.ENABLE_BOOTSTRAP_CI:
+            dpd_ci = bootstrap_ci(
+                list(group_rates.values()), n_bootstrap=settings.BOOTSTRAP_SAMPLES
+            )
+
+            eod_ci = bootstrap_ci(
+                list(group_tprs.values()), n_bootstrap=settings.BOOTSTRAP_SAMPLES
+            )
+
         audit_results[sensitive] = {
             "selection_rate": group_rates,
             "true_positive_rate": group_tprs,
             "dpd": round(dpd, 4),
             "eod": round(eod, 4),
             "dir": round(dir_ratio, 4),
+            "dpd_ci": dpd_ci,
+            "eod_ci": eod_ci,
             "biased": decision["bias_present"],
             "severity_score": decision["severity_score"],
             "violations": decision["violations"],
@@ -159,5 +222,6 @@ async def run_bias_detection(
         "bias_driver": bias_driver,
         "bias_severity_score": max_severity,
         "sensitive_audit": audit_results,
+        "warnings": list(set(warnings)),  # remove duplicates
         "next_step": "bias_mitigation" if max_severity > 0 else "model_optimization",
     }
