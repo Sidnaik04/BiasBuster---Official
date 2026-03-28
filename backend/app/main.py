@@ -5,6 +5,7 @@ from .db import engine
 from . import models
 from .routers.upload import router as upload_router
 from .routers.bias import router as bias_router
+from .routers.bias_mitigation import router as bias_mitigation_router
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -28,6 +29,7 @@ app.add_middleware(
 # routers
 app.include_router(upload_router)
 app.include_router(bias_router)
+app.include_router(bias_mitigation_router)
 
 
 @app.get("/health")

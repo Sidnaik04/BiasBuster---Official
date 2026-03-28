@@ -3,7 +3,9 @@ uvicorn[standard]
 python-multipart
 pydantic
 pandas
+numpy
 scikit-learn
+imbalanced-learn
 joblib
 sqlalchemy[aio]
 asyncpg

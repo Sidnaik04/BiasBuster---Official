@@ -3,6 +3,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.db import get_session
 from app.schemas.bias import BiasDetectRequest
 from app.services.bias_service import run_bias_detection
+from app.utils.mitigation.strategy_recommender import recommend_strategy
+from app.utils.mitigation.strategy_evaluator import (
+    find_best_strategy,
+    generate_comparison_report,
+)
 
 router = APIRouter(prefix="/api/bias", tags=["Bias Detection"])
 
@@ -19,3 +24,113 @@ async def detect_bias(
         raise HTTPException(status_code=400, detail=str(ve))
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Bias detection failed: {e}")
+
+
+@router.post("/recommend-strategy")
+async def recommend_mitigation_strategy(bias_detection_result: dict):
+    """
+    Recommend optimal bias mitigation strategy based on bias detection results.
+
+    Args:
+        bias_detection_result: Complete output from /api/bias/detect endpoint
+
+    Returns:
+        {
+            "recommended_strategy": "threshold" | "reweighting" | "smote" | "none",
+            "confidence_score": 0.0-1.0,
+            "reasoning": str,
+            "target_attributes": [str],
+            "expected_improvements": {
+                "dpd": float (% change expected),
+                "eod": float (% change expected),
+                "accuracy_impact": float (% change expected)
+            },
+            "warnings": [str],
+            "alternative_strategies": [
+                {"strategy": str, "reason": str},
+                ...
+            ]
+        }
+    """
+    try:
+        recommendation = recommend_strategy(bias_detection_result)
+        return {"status": "success", "recommendation": recommendation}
+    except KeyError as ke:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid bias detection output format: missing {str(ke)}",
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=500, detail=f"Strategy recommendation failed: {str(e)}"
+        )
+
+
+@router.post("/rank-strategies")
+async def rank_mitigation_strategies(strategy_results: dict):
+    """
+    Rank mitigation strategies by comparing fairness improvements vs. accuracy trade-offs.
+
+    Call this endpoint AFTER testing all three strategies (threshold, reweighting, smote)
+    to get an objective ranking of which worked best.
+
+    Args:
+        strategy_results: Results from all tested strategies in this format:
+            {
+                "reweighting": {
+                    "before_metrics": {
+                        "fairness": {"dpd": float, "eod": float, "dir": float},
+                        "performance": {"accuracy": float, "precision": float, "recall": float, "f1": float}
+                    },
+                    "after_metrics": {
+                        "fairness": {"dpd": float, "eod": float, "dir": float},
+                        "performance": {"accuracy": float, "precision": float, "recall": float, "f1": float}
+                    }
+                },
+                "threshold": {...},
+                "smote": {...}
+            }
+
+        Optional query params:
+        - fairness_weight: (default 1.0) How much to value fairness improvements
+        - accuracy_weight: (default 0.5) How much to penalize accuracy loss
+
+    Returns:
+        {
+            "status": "success",
+            "best_strategy": "threshold",
+            "best_score": 0.8542,
+            "ranking": [
+                {
+                    "rank": 1,
+                    "strategy": "threshold",
+                    "total_score": 0.8542,
+                    "fairness_improvement": 0.1068,
+                    "accuracy_impact": -0.0201,
+                    "dpd_improvement": 0.1014,
+                    "eod_improvement": 0.0926,
+                    "di_improvement": 0.3379
+                },
+                ...
+            ],
+            "insights": [
+                "🏆 THRESHOLD is a clear winner...",
+                "📊 Threshold sacrifices..."
+            ],
+            "recommendation": "✅ Deploy Threshold Optimizer..."
+        }
+    """
+    try:
+        # Generate detailed comparison report
+        report = generate_comparison_report(strategy_results)
+        return report
+    except KeyError as ke:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid strategy results format: missing {str(ke)}. "
+            f"Expected: {{'strategy_name': {{'before_metrics': {...}, 'after_metrics': {...}}}}}",
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=500, detail=f"Strategy ranking failed: {str(e)}"
+        )

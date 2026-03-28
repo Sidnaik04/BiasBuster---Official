@@ -12,6 +12,7 @@ class Settings(BaseSettings):
     database_url: str  # ← lowercase field
 
     TEMP_DIR: str = "/tmp/biasbuster_uploads"
+    ARTIFACT_DIR: str = str(Path(__file__).resolve().parent.parent / "artifacts")
     MAX_CSV_SIZE_BYTES: int = 50 * 1024 * 1024
 
     MIN_GROUP_SIZE: int = 30
