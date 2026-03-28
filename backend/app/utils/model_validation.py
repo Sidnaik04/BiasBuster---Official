@@ -13,10 +13,8 @@ ALLOWED_METHODS = [
     "transform",
 ]
 
-
 def has_allowed_method(obj: Any) -> bool:
     return any(hasattr(obj, m) for m in ALLOWED_METHODS)
-
 
 def extract_model_from_dict(bundle: Dict) -> Any:
     # Common patterns:
@@ -27,14 +25,12 @@ def extract_model_from_dict(bundle: Dict) -> Any:
             return bundle[key]
     return None
 
-
 def extract_wrapped_model(obj: Any) -> Any:
     possible_attrs = ["model", "base_model", "estimator", "clf", "inner_model"]
     for attr in possible_attrs:
         if hasattr(obj, attr):
             return getattr(obj, attr)
     return None
-
 
 def safe_load_model_from_path(path: Path) -> Dict:
     try:

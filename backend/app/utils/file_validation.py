@@ -12,8 +12,7 @@ TEMP_DIR = Path(settings.TEMP_DIR)
 TEMP_DIR.mkdir(parents=True, exist_ok=True)
 
 ALLOWED_DATA_EXT = {".csv"}
-ALLO_MODEL_EXT = {".pkl", ".joblib"}
-
+ALLOWED_MODEL_EXT = {".pkl", ".joblib"}
 
 async def save_upload_file(upload_file, subdir: str = "") -> Path:
     file_ext = Path(upload_file.filename).suffix.lower()
@@ -30,7 +29,6 @@ async def save_upload_file(upload_file, subdir: str = "") -> Path:
 
     await upload_file.seek(0)
     return file_path
-
 
 async def validate_csv_file(file_path: Path) -> Tuple[pd.DataFrame, str]:
     # read using pandas from path (sync)
@@ -58,3 +56,5 @@ async def validate_csv_file(file_path: Path) -> Tuple[pd.DataFrame, str]:
         raise ValueError("CSV file exceeds maximum allowed size")
 
     return df, "ok"
+
+
