@@ -1,8 +1,13 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.db import get_session
-from app.schemas.bias import BiasDetectRequest
-from app.services.bias_service import run_bias_detection
+from app.schemas.bias import (
+    BiasDetectRequest,
+    BiasExplanation,
+    CorrectBiasRequest,
+    CorrectBiasResponse,
+)
+from app.services.bias_service import run_bias_detection, apply_bias_correction
 from app.utils.mitigation.strategy_recommender import recommend_strategy
 from app.utils.mitigation.strategy_evaluator import (
     find_best_strategy,
@@ -134,3 +139,38 @@ async def rank_mitigation_strategies(strategy_results: dict):
         raise HTTPException(
             status_code=500, detail=f"Strategy ranking failed: {str(e)}"
         )
+
+
+@router.post("/correct", response_model=CorrectBiasResponse)
+async def correct_bias(
+    payload: CorrectBiasRequest,
+    session: AsyncSession = Depends(get_session),
+):
+    """
+    Apply selected bias mitigation strategies to a dataset and evaluate their effectiveness.
+
+    This endpoint:
+    1. Loads the dataset from the specified upload_id
+    2. Applies each requested mitigation strategy
+    3. Evaluates fairness improvements for each strategy
+    4. Returns comparative results with recommendations
+
+    Args:
+        upload_id: ID of the uploaded dataset to correct
+        target_column: Target label column for the model
+        sensitive_columns: List of sensitive attributes to address
+        strategy_ids: IDs of strategies to apply (1=threshold, 2=reweighting, 3=smote)
+
+    Returns:
+        `CorrectBiasResponse` containing:
+        - Results for each applied strategy with before/after metrics
+        - Best performing strategy ID
+        - Overall summary and recommendations
+    """
+    try:
+        result = await apply_bias_correction(payload, session)
+        return result
+    except ValueError as ve:
+        raise HTTPException(status_code=400, detail=str(ve))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Bias correction failed: {e}")

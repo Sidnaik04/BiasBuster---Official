@@ -12,6 +12,32 @@ def true_positive_rate(y_true, y_pred):
     return float((y_pred[positives] == 1).mean())
 
 
+# Backwards-compatible API expected by other modules
+def compute_selection_rate(y_pred):
+    """Compatibility wrapper for selection rate.
+
+    Some modules import `compute_selection_rate` — provide wrapper.
+    """
+    return selection_rate(y_pred)
+
+
+def compute_true_positive_rate(y_true, y_pred):
+    """Compatibility wrapper for true positive rate."""
+    return true_positive_rate(y_true, y_pred)
+
+
+def compute_false_positive_rate(y_true, y_pred):
+    """Compute false positive rate: FP / N where N = negatives count.
+
+    Returns 0.0 if there are no negative samples.
+    """
+    negatives = y_true == 0
+    if negatives.sum() == 0:
+        return 0.0
+    fp = ((y_pred[negatives] == 1)).sum()
+    return float(fp / negatives.sum())
+
+
 def demographic_parity_difference(group_rates: dict):
     return max(group_rates.values()) - min(group_rates.values())
 

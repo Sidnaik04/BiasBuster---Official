@@ -1,0 +1,84 @@
+{
+  "timestamp": "2026-05-08T02:33:23.733872",
+  "dataset_shape": [
+    48842,
+    15
+  ],
+  "strategy": "reweighting",
+  "train_test_split_seed": 42,
+  "retrain_split_seed": 43,
+  "hyperparameters": {},
+  "model_type": "uploaded_model",
+  "warnings": [
+    "Reweighting mitigation retraining failed; fallback to original model.",
+    "Reweighting retraining failed; fallback to original model."
+  ],
+  "comparison": {
+    "mitigated_fairness_gain": 0.0,
+    "retrained_fairness_gain": 0.0,
+    "accuracy_recovery": 0.0
+  },
+  "original_metrics": {
+    "accuracy": 0.8543351417750026,
+    "precision": 0.7432216905901117,
+    "recall": 0.5979469632164243,
+    "f1": 0.6627162834794975,
+    "roc_auc": 0.9074340505217144,
+    "confusion_matrix": [
+      [
+        6948,
+        483
+      ],
+      [
+        940,
+        1398
+      ]
+    ],
+    "dpd": 0.21396156855493612,
+    "eod": 0.20023540274770346,
+    "di": 0.31997157027934564,
+    "fairness_score": 0.7929015143486802
+  },
+  "mitigated_metrics": {
+    "accuracy": 0.8543351417750026,
+    "precision": 0.7432216905901117,
+    "recall": 0.5979469632164243,
+    "f1": 0.6627162834794975,
+    "roc_auc": 0.9074340505217144,
+    "confusion_matrix": [
+      [
+        6948,
+        483
+      ],
+      [
+        940,
+        1398
+      ]
+    ],
+    "dpd": 0.21396156855493612,
+    "eod": 0.20023540274770346,
+    "di": 0.31997157027934564,
+    "fairness_score": 0.7929015143486802
+  },
+  "final_metrics": {
+    "accuracy": 0.8543351417750026,
+    "precision": 0.7432216905901117,
+    "recall": 0.5979469632164243,
+    "f1": 0.6627162834794975,
+    "roc_auc": 0.9074340505217144,
+    "confusion_matrix": [
+      [
+        6948,
+        483
+      ],
+      [
+        940,
+        1398
+      ]
+    ],
+    "dpd": 0.21396156855493612,
+    "eod": 0.20023540274770346,
+    "di": 0.31997157027934564,
+    "fairness_score": 0.7929015143486802
+  }
+}
