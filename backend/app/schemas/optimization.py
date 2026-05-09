@@ -45,18 +45,20 @@ class OptimizationResponse(BaseModel):
     """Response from model optimization."""
 
     status: str = Field(..., description="Status: 'success' or 'error'")
-    best_params: Dict[str, Any] = Field(..., description="Best hyperparameters found")
-    best_score: float = Field(..., description="Best combined score achieved")
-    accuracy: float = Field(..., description="Test accuracy of best model")
-    fairness_score: float = Field(..., description="Fairness score of best model")
-    combined_score: float = Field(..., description="Combined score of best model")
-    dpd: Optional[float] = Field(None, description="Demographic parity difference")
-    eod: Optional[float] = Field(None, description="Equal opportunity difference")
-    optimization_method: str = Field(
-        ..., description="Method used: 'gridsearch' or 'optuna'"
-    )
-    trials_run: int = Field(..., description="Number of trials executed")
-    comparison: List[TrialResult] = Field(..., description="Top trials for comparison")
+    optimization_id: Optional[str] = Field(None, description="Unique ID for this optimization run")
+    baseline_model: Optional[Dict[str, Any]] = Field(None, description="Metrics for original model")
+    optimized_model: Optional[Dict[str, Any]] = Field(None, description="Metrics for optimized model")
+    improvements: Optional[Dict[str, Any]] = Field(None, description="Calculated improvements")
+    best_params: Dict[str, Any] = Field(default_factory=dict, description="Best hyperparameters found")
+    best_score: float = Field(default=0.0, description="Best combined score achieved")
+    optimization_method: str = Field(..., description="Method used: 'gridsearch' or 'optuna'")
+    optimized_model_available: bool = Field(default=False, description="Whether optimized model was saved")
+    download_endpoint: Optional[str] = Field(None, description="Endpoint to download optimized model")
+    optimization_summary: str = Field(default="", description="Summary of optimization results")
+    
+    # Original backward compatibility / trial details
+    trials_run: int = Field(default=0, description="Number of trials executed")
+    comparison: List[TrialResult] = Field(default_factory=list, description="Top trials for comparison")
     accuracy_weight: float = Field(..., description="Weight used for accuracy")
     fairness_weight: float = Field(..., description="Weight used for fairness")
     message: str = Field(default="", description="Additional status message")

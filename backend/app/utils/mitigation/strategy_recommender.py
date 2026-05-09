@@ -18,6 +18,94 @@ from typing import Dict, Any, List, Tuple
 import math
 
 
+def _metric_is_biased(metrics: Dict[str, Any]) -> bool:
+    return (
+        abs(metrics.get("dpd", 0.0)) > 0.10
+        or abs(metrics.get("eod", 0.0)) > 0.10
+        or metrics.get("dir", 1.0) < 0.80
+    )
+
+
+def _build_analysis_from_payload(
+    bias_detection_output: Dict[str, Any],
+) -> Dict[str, Dict[str, Any]]:
+    sensitive_audit = bias_detection_output.get("sensitive_audit", {}) or {}
+    if sensitive_audit:
+        return {
+            attr: _analyze_attribute(attr, metrics)
+            for attr, metrics in sensitive_audit.items()
+        }
+
+    computed_metrics = bias_detection_output.get("computed_metrics", {}) or {}
+    if not computed_metrics:
+        return {}
+
+    synthetic_metrics = {
+        "overall": {
+            "dpd": abs(float(computed_metrics.get("dpd", 0.0))),
+            "eod": abs(float(computed_metrics.get("eod", 0.0))),
+            "dir": float(computed_metrics.get("di", 1.0)),
+            "violations": {
+                "dpd": abs(float(computed_metrics.get("dpd", 0.0))) > 0.10,
+                "eod": abs(float(computed_metrics.get("eod", 0.0))) > 0.10,
+                "dir": float(computed_metrics.get("di", 1.0)) < 0.80,
+            },
+            "severity": 1 if _metric_is_biased(computed_metrics) else 0,
+            "n_groups": max(
+                2,
+                int(
+                    bias_detection_output.get("dataset_analysis", {}).get(
+                        "sensitive_attribute_count", 1
+                    )
+                ),
+            ),
+            "attr_type": "binary",
+        }
+    }
+
+    return {
+        attr: _analyze_attribute(attr, metrics)
+        for attr, metrics in synthetic_metrics.items()
+    }
+
+
+def _detect_bias_present(bias_detection_output: Dict[str, Any]) -> bool:
+    if bias_detection_output.get("bias_present") is True:
+        return True
+
+    computed_metrics = bias_detection_output.get("computed_metrics", {}) or {}
+    if computed_metrics and _metric_is_biased(computed_metrics):
+        return True
+
+    sensitive_audit = bias_detection_output.get("sensitive_audit", {}) or {}
+    if sensitive_audit:
+        for metrics in sensitive_audit.values():
+            if metrics.get("biased") is True or _metric_is_biased(metrics):
+                return True
+
+    return False
+
+
+def _derive_biased_attributes(
+    bias_detection_output: Dict[str, Any], analysis: Dict[str, Dict[str, Any]]
+) -> List[str]:
+    sensitive_audit = bias_detection_output.get("sensitive_audit", {}) or {}
+
+    biased_attributes = [
+        attr
+        for attr, metrics in sensitive_audit.items()
+        if metrics.get("biased") is True or _metric_is_biased(metrics)
+    ]
+
+    if biased_attributes:
+        return biased_attributes
+
+    if _detect_bias_present(bias_detection_output):
+        return list(analysis.keys()) if analysis else ["overall"]
+
+    return []
+
+
 def recommend_strategy(bias_detection_output: Dict[str, Any]) -> Dict[str, Any]:
     """
     Intelligent hybrid recommender analyzing bias detection results.
@@ -57,25 +145,11 @@ def recommend_strategy(bias_detection_output: Dict[str, Any]) -> Dict[str, Any]:
         }
     """
 
-    # Extract relevant information
-    # Note: We rely on biased_attributes as source of truth, not bias_present flag
-    # (which might be missing in some response formats)
-    sensitive_audit = bias_detection_output.get("sensitive_audit", {})
-    biased_attributes = [
-        attr
-        for attr, metrics in sensitive_audit.items()
-        if metrics.get("biased", False)
-    ]
+    analysis = _build_analysis_from_payload(bias_detection_output)
+    biased_attributes = _derive_biased_attributes(bias_detection_output, analysis)
 
-    # Handle no bias case: only when no biased attributes detected
-    if not biased_attributes:
+    if not _detect_bias_present(bias_detection_output):
         return _build_no_bias_response()
-
-    # Analyze attributes
-    analysis = {}
-    for attr in biased_attributes:
-        metrics = sensitive_audit[attr]
-        analysis[attr] = _analyze_attribute(attr, metrics)
 
     # Extract dataset info for scoring
     dataset_info = _extract_dataset_info(bias_detection_output)
@@ -149,14 +223,20 @@ def _build_no_bias_response() -> Dict[str, Any]:
 def _extract_dataset_info(bias_detection_output: Dict[str, Any]) -> Dict[str, Any]:
     """Extract dataset characteristics for scoring."""
     dataset_health = bias_detection_output.get("dataset_health", {})
+    dataset_analysis = bias_detection_output.get("dataset_analysis", {})
     model_info = bias_detection_output.get("model_info", {})
 
     return {
-        "rows": dataset_health.get("rows", 1000),
+        "rows": dataset_analysis.get("dataset_size", dataset_health.get("rows", 1000)),
         "columns": dataset_health.get("columns", 10),
         "target_distribution": dataset_health.get("target_distribution", {}),
         "class_imbalance_ratio": _compute_class_imbalance_ratio(
             dataset_health.get("target_distribution", {})
+        ),
+        "prediction_skew": dataset_analysis.get("prediction_skew", 0.0),
+        "sensitive_attribute_count": dataset_analysis.get(
+            "sensitive_attribute_count",
+            len(bias_detection_output.get("sensitive_audit", {})),
         ),
         "model_accuracy": model_info.get("overall_accuracy", 0.8),
     }

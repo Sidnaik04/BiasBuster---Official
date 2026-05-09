@@ -96,3 +96,32 @@ async def optimize_model(
             status_code=500,
             detail=f"Optimization failed: {str(e)}",
         )
+
+from fastapi.responses import FileResponse
+from sqlalchemy import select
+from app.models.models import OptimizationRun
+import os
+
+@router.get("/optimize/download/{optimization_id}")
+async def download_optimized_model(
+    optimization_id: str,
+    session: AsyncSession = Depends(get_session),
+):
+    """Download an optimized model."""
+    record = (
+        await session.execute(
+            select(OptimizationRun).where(OptimizationRun.optimization_id == optimization_id)
+        )
+    ).scalar_one_or_none()
+
+    if not record:
+        raise HTTPException(status_code=404, detail="Optimization record not found")
+
+    if not record.artifact_path or not os.path.exists(record.artifact_path):
+        raise HTTPException(status_code=404, detail="Optimized model file not found")
+
+    return FileResponse(
+        path=record.artifact_path,
+        media_type="application/octet-stream",
+        filename=f"optimized_model_{optimization_id}.joblib",
+    )

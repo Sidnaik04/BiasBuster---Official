@@ -10,6 +10,14 @@ class BiasDetectRequest(BaseModel):
     )
 
 
+class StrategyRecommendationRequest(BaseModel):
+    upload_id: int = Field(..., description="UploadRecord ID")
+    target_column: str = Field(..., description="Target label column")
+    sensitive_columns: List[str] = Field(
+        ..., description="List of sensitive attributes selected by user"
+    )
+
+
 class ExplainBiasRequest(BaseModel):
     upload_id: int = Field(..., description="UploadRecord ID")
     target_column: str = Field(..., description="Target label column")

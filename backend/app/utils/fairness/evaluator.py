@@ -10,13 +10,41 @@ from app.utils.fairness.metrics import (
 )
 
 
+def _validate_metric_inputs(y_true, y_pred, sensitive):
+    if y_true is None or y_pred is None or sensitive is None:
+        raise ValueError("y_true, y_pred, and sensitive must all be provided")
+
+    y_true_s = pd.Series(y_true)
+    y_pred_s = pd.Series(y_pred)
+    sensitive_s = pd.Series(sensitive)
+
+    if len(y_true_s) == 0 or len(y_pred_s) == 0 or len(sensitive_s) == 0:
+        raise ValueError("Metric inputs cannot be empty")
+    if not (len(y_true_s) == len(y_pred_s) == len(sensitive_s)):
+        raise ValueError(
+            f"Metric input length mismatch: y_true={len(y_true_s)}, y_pred={len(y_pred_s)}, sensitive={len(sensitive_s)}"
+        )
+
+    y_true_unique = y_true_s.dropna().unique()
+    sensitive_unique = sensitive_s.dropna().unique()
+
+    if len(y_true_unique) < 2:
+        raise ValueError("y_true must contain at least two classes")
+    if len(sensitive_unique) < 2:
+        raise ValueError("sensitive must contain at least two groups")
+
+    return y_true_s, y_pred_s, sensitive_s
+
+
 def evaluate_baseline(y_true, y_pred, sensitive):
-    unique_labels = set(pd.Series(y_true).dropna().unique()) | set(
-        pd.Series(y_pred).dropna().unique()
-    )
+    y_true_s, y_pred_s, sensitive_s = _validate_metric_inputs(y_true, y_pred, sensitive)
+
+    unique_labels = set(y_true_s.dropna().unique()) | set(y_pred_s.dropna().unique())
     metric_average = "binary" if len(unique_labels) <= 2 else "macro"
 
-    df = pd.DataFrame({"y_true": y_true, "y_pred": y_pred, "sensitive": sensitive})
+    df = pd.DataFrame(
+        {"y_true": y_true_s, "y_pred": y_pred_s, "sensitive": sensitive_s}
+    )
 
     group_rates = {}
     group_tprs = {}

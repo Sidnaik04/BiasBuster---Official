@@ -13,6 +13,8 @@ from app.schemas.correction import (
     CorrectionRecord,
 )
 from app.services.correction_service import run_data_correction_wizard
+from app.schemas.model_registry import RegisterModelRequest
+from app.services.model_registry_service import ModelRegistryService
 from app.config import settings
 
 router = APIRouter(prefix="/api/correction", tags=["Data Correction"])
@@ -79,6 +81,45 @@ async def run_correction_wizard(
         )
         session.add(correction_record)
         await session.commit()
+
+        # Auto-register mitigated model in ModelRegistry
+        if result["model_export_path"] and os.path.isfile(result["model_export_path"]):
+            metrics_after = result["metrics_after"]
+            combined_score = (0.6 * metrics_after.get("fairness_score", 0.5)) + (
+                0.4 * metrics_after.get("accuracy", 0.5)
+            )
+
+            registry_payload = RegisterModelRequest(
+                upload_id=payload.upload_id,
+                model_name=f"mitigated_model_{payload.strategy}",
+                model_type=result.get("model_type", "LogisticRegression"),
+                source_type="mitigated",
+                parent_model_id=None,
+                mitigation_strategy=payload.strategy,
+                artifact_path=result["model_export_path"],
+                artifact_size_bytes=os.path.getsize(result["model_export_path"]),
+                performance_metrics={
+                    "accuracy": metrics_after.get("accuracy", 0),
+                    "precision": metrics_after.get("precision", 0),
+                    "recall": metrics_after.get("recall", 0),
+                    "f1": metrics_after.get("f1", 0),
+                    "roc_auc": metrics_after.get("roc_auc", None),
+                },
+                fairness_metrics={
+                    "fairness_score": metrics_after.get("fairness_score", 0),
+                    "dpd": metrics_after.get("dpd", None),
+                    "eod": metrics_after.get("eod", None),
+                    "dir": metrics_after.get("dir", None),
+                },
+                operational_metrics={
+                    "model_size_bytes": os.path.getsize(result["model_export_path"]),
+                },
+                combined_score=combined_score,
+                version=f"v1_mitigated_{payload.strategy}",
+                experiment_id=result["correction_id"],
+            )
+
+            await ModelRegistryService.register_model(registry_payload, session)
 
         return DataCorrectionWizardResponse(**result)
 

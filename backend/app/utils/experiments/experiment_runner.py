@@ -38,10 +38,8 @@ from app.utils.fairness_metrics import (
     true_positive_rate,
 )
 
-# Import mitigation strategies
-from app.utils.mitigation.threshold import apply_threshold_optimizer
-from app.utils.mitigation.reweighting import compute_sample_weights
-from app.utils.mitigation.smote import apply_smote
+# Import mitigation orchestrator
+from app.services.mitigation_orchestrator import MitigationOrchestrator
 
 logger = logging.getLogger(__name__)
 
@@ -101,6 +99,9 @@ class ExperimentRunner:
         self.y_pred_baseline = None
         self.metrics_before = None
         self.warnings = []
+
+        # Initialize orchestrator
+        self.orchestrator = MitigationOrchestrator()
 
     def load_and_prepare_data(self) -> bool:
         """
@@ -233,220 +234,164 @@ class ExperimentRunner:
         self, strategy_name: str, timeout_seconds: int = 300
     ) -> Dict[str, Any]:
         """
-        Run a single mitigation strategy.
+        Run a single mitigation strategy using orchestrator.
 
         Args:
             strategy_name: 'threshold', 'reweighting', or 'smote'
-            timeout_seconds: Maximum execution time
+            timeout_seconds: Maximum execution time (note: not currently enforced by orchestrator)
 
         Returns:
-            Strategy result dictionary
+            Strategy result dictionary compatible with legacy experiment format
         """
-        result = {
-            "strategy": strategy_name,
-            "status": "success",
-            "error": None,
-        }
-
-        start_time = time.time()
-
         try:
-            logger.info(f"Starting strategy: {strategy_name}")
+            logger.info(f"Starting strategy via orchestrator: {strategy_name}")
 
-            # Prepare data for strategy
-            sensitive_series = self.df[
+            # Prepare test data (same as training data in this context)
+            sensitive_test = self.df[
                 self.sensitive_columns[0]
             ]  # Use first sensitive column
-            X_train = self.X
-            y_train = self.y_true
 
+            # Prepare features for inference
             if isinstance(self.model, Pipeline):
-                X_infer = X_train
+                X_infer = self.X
             else:
-                X_infer = encode_features_for_inference(X_train)
+                X_infer = encode_features_for_inference(self.X)
 
-            # Run appropriate strategy
-            if strategy_name == "threshold":
-                mitigated_model = self._run_threshold_strategy(
-                    X_train, y_train, X_infer, sensitive_series
-                )
+            # Define metrics computation function
+            def compute_metrics(model, X_test, y_test, sensitive_features):
+                """Compute fairness and accuracy metrics."""
+                try:
+                    y_pred = predict_labels(model, X_test)
+                    y_pred = np.nan_to_num(y_pred).astype(int)
 
-            elif strategy_name == "reweighting":
-                mitigated_model = self._run_reweighting_strategy(
-                    X_train, y_train, X_infer, sensitive_series
-                )
+                    accuracy = float(accuracy_score(y_test, y_pred))
 
-            elif strategy_name == "smote":
-                mitigated_model = self._run_smote_strategy(
-                    X_train, y_train, X_infer, sensitive_series
-                )
-            else:
-                raise ValueError(f"Unknown strategy: {strategy_name}")
+                    # Compute fairness metrics per sensitive column
+                    group_rates = {}
+                    group_tprs = {}
 
-            # Get predictions with mitigated model
-            y_pred_mitigated = predict_labels(mitigated_model, X_infer)
-            y_pred_mitigated = np.nan_to_num(y_pred_mitigated).astype(int)
+                    for group in self.df[self.sensitive_columns[0]].unique():
+                        mask = self.df[self.sensitive_columns[0]] == group
+                        if mask.sum() > 0:
+                            group_rates[group] = (y_pred[mask] == 1).mean()
+                            positives = y_test[mask] == 1
+                            if positives.sum() > 0:
+                                group_tprs[group] = (
+                                    y_pred[mask][positives] == 1
+                                ).mean()
+                            else:
+                                group_tprs[group] = 0.0
 
-            # Compute metrics after mitigation
-            accuracy_after = float(accuracy_score(self.y_true, y_pred_mitigated))
+                    dpd = demographic_parity_difference(group_rates)
+                    eod = (
+                        equal_opportunity_difference(group_tprs) if group_tprs else 0.0
+                    )
+                    dir_val = disparate_impact_ratio(group_rates)
 
-            # Fairness metrics
-            fairness_metrics_after = {}
-            all_dpds_after = []
-            all_eods_after = []
+                    return {
+                        "accuracy": accuracy,
+                        "dpd": float(dpd),
+                        "eod": float(eod),
+                        "dir": float(dir_val),
+                    }
+                except Exception as e:
+                    logger.error(f"Failed to compute metrics: {e}")
+                    return {
+                        "accuracy": 0.0,
+                        "dpd": 0.0,
+                        "eod": 0.0,
+                        "dir": 1.0,
+                    }
 
-            for sensitive_col in self.sensitive_columns:
-                group_rates = {}
-                group_tprs = {}
-
-                for group in self.df[sensitive_col].unique():
-                    mask = self.df[sensitive_col] == group
-                    if mask.sum() > 0:
-                        group_rates[group] = (y_pred_mitigated[mask] == 1).mean()
-                        positives = self.y_true[mask] == 1
-                        if positives.sum() > 0:
-                            group_tprs[group] = (
-                                y_pred_mitigated[mask][positives] == 1
-                            ).mean()
-                        else:
-                            group_tprs[group] = 0.0
-
-                dpd = demographic_parity_difference(group_rates)
-                eod = equal_opportunity_difference(group_tprs) if group_tprs else 0.0
-
-                fairness_metrics_after[sensitive_col] = {
-                    "dpd": float(dpd),
-                    "eod": float(eod),
-                }
-
-                all_dpds_after.append(dpd)
-                all_eods_after.append(eod)
-
-            avg_dpd_after = np.mean(all_dpds_after) if all_dpds_after else 0.0
-            avg_eod_after = np.mean(all_eods_after) if all_eods_after else 0.0
-            fairness_score_after = 1 - (abs(avg_dpd_after) + abs(avg_eod_after)) / 2
-            fairness_score_after = max(0.0, fairness_score_after)
-
-            # Compute improvements
-            accuracy_drop = accuracy_after - self.metrics_before["accuracy"]
-            fairness_improvement = (
-                fairness_score_after - self.metrics_before["fairness_score"]
+            # Use orchestrator to run strategy
+            mitigation_result = self.orchestrator.run_strategy(
+                strategy_name=strategy_name,
+                model=self.model,
+                X_train=self.X,
+                y_train=self.y_true,
+                X_test=self.X,
+                y_test=self.y_true,
+                sensitive_features_train=sensitive_test,
+                sensitive_features_test=sensitive_test,
+                target_column=self.target_column,
+                compute_metrics_func=compute_metrics,
             )
 
-            # Combined score: 0.6*fairness_improvement - 0.4*accuracy_drop
-            combined_score = (0.6 * fairness_improvement) - (0.4 * abs(accuracy_drop))
-
-            # Update result
-            result.update(
-                {
-                    "accuracy_before": self.metrics_before["accuracy"],
-                    "dpd_before": self.metrics_before["dpd"],
-                    "eod_before": self.metrics_before["eod"],
-                    "dir_before": self.metrics_before["dir"],
-                    "fairness_score_before": self.metrics_before["fairness_score"],
-                    "accuracy_after": accuracy_after,
-                    "dpd_after": avg_dpd_after,
-                    "eod_after": avg_eod_after,
-                    "dir_after": (
-                        float(
-                            np.mean(
-                                [
-                                    fairness_metrics_after[col]["dpd"]
-                                    for col in fairness_metrics_after
-                                ]
-                            )
-                        )
-                        if fairness_metrics_after
-                        else 1.0
-                    ),
-                    "fairness_score_after": fairness_score_after,
-                    "accuracy_drop": accuracy_drop,
-                    "fairness_improvement": fairness_improvement,
-                    "combined_score": combined_score,
-                }
-            )
-
-            duration = time.time() - start_time
-            result["duration_seconds"] = duration
+            # Convert orchestrator result to legacy format
+            result = {
+                "strategy": strategy_name,
+                "status": (
+                    "success" if mitigation_result.status == "success" else "failed"
+                ),
+                "error": mitigation_result.error_message,
+                "accuracy_before": self.metrics_before["accuracy"],
+                "dpd_before": self.metrics_before["dpd"],
+                "eod_before": self.metrics_before["eod"],
+                "dir_before": self.metrics_before["dir"],
+                "fairness_score_before": self.metrics_before["fairness_score"],
+                "accuracy_after": mitigation_result.metrics_after.get("accuracy", 0.0),
+                "dpd_after": mitigation_result.metrics_after.get("dpd", 0.0),
+                "eod_after": mitigation_result.metrics_after.get("eod", 0.0),
+                "dir_after": mitigation_result.metrics_after.get("dir", 1.0),
+                "fairness_score_after": 1
+                - (
+                    abs(mitigation_result.metrics_after.get("dpd", 0.0))
+                    + abs(mitigation_result.metrics_after.get("eod", 0.0))
+                )
+                / 2,
+                "accuracy_drop": (
+                    mitigation_result.metrics_after.get("accuracy", 0.0)
+                    - self.metrics_before["accuracy"]
+                ),
+                "fairness_improvement": mitigation_result.fairness_improvement or 0.0,
+                "combined_score": mitigation_result.combined_score or 0.0,
+                "duration_seconds": mitigation_result.execution_time_seconds or 0.0,
+            }
 
             logger.info(
-                f"Strategy {strategy_name} completed: fairness_improvement={fairness_improvement:.4f}, accuracy_drop={accuracy_drop:.4f}"
+                f"Strategy {strategy_name} completed: fairness_improvement={result['fairness_improvement']:.4f}, "
+                f"accuracy_drop={result['accuracy_drop']:.4f}"
             )
 
-        except TimeoutException as e:
-            result["status"] = "failed"
-            result["error"] = str(e)
-            logger.warning(f"Strategy {strategy_name} timed out: {e}")
+            return result
 
         except Exception as e:
-            result["status"] = "failed"
-            result["error"] = str(e)
-            logger.error(f"Strategy {strategy_name} failed: {e}")
-
-        return result
+            logger.error(f"Strategy {strategy_name} execution failed: {e}")
+            return {
+                "strategy": strategy_name,
+                "status": "failed",
+                "error": str(e),
+                "accuracy_before": (
+                    self.metrics_before["accuracy"] if self.metrics_before else 0.0
+                ),
+                "dpd_before": (
+                    self.metrics_before["dpd"] if self.metrics_before else 0.0
+                ),
+                "eod_before": (
+                    self.metrics_before["eod"] if self.metrics_before else 0.0
+                ),
+                "dir_before": (
+                    self.metrics_before["dir"] if self.metrics_before else 1.0
+                ),
+                "fairness_score_before": (
+                    self.metrics_before["fairness_score"]
+                    if self.metrics_before
+                    else 0.0
+                ),
+                "duration_seconds": 0.0,
+            }
 
     def _run_threshold_strategy(self, X_train, y_train, X_infer, sensitive_series):
-        """Apply threshold optimization strategy."""
-        try:
-            return apply_threshold_optimizer(
-                self.model,
-                X_train,
-                y_train,
-                sensitive_series,
-                grid_size=200,
-            )
-        except Exception as e:
-            logger.error(f"Threshold strategy failed: {e}")
-            raise
+        """DEPRECATED: Use orchestrator instead."""
+        raise NotImplementedError("Use orchestrator.run_strategy() instead")
 
     def _run_reweighting_strategy(self, X_train, y_train, X_infer, sensitive_series):
-        """Apply reweighting strategy."""
-        try:
-            from sklearn.utils.class_weight import (
-                compute_sample_weight as sklearn_compute_sample_weight,
-            )
-
-            weights = compute_sample_weights(sensitive_series)
-
-            # Clone model and fit with weights
-            if isinstance(self.model, Pipeline):
-                model_copy = self.model
-                if hasattr(model_copy, "fit"):
-                    model_copy.fit(
-                        X_train,
-                        y_train,
-                        **{f"{model_copy.steps[-1][0]}__sample_weight": weights},
-                    )
-            else:
-                from sklearn.base import clone
-
-                model_copy = clone(self.model)
-                model_copy.fit(X_train, y_train, sample_weight=weights)
-
-            return model_copy
-        except Exception as e:
-            logger.error(f"Reweighting strategy failed: {e}")
-            raise
+        """DEPRECATED: Use orchestrator instead."""
+        raise NotImplementedError("Use orchestrator.run_strategy() instead")
 
     def _run_smote_strategy(self, X_train, y_train, X_infer, sensitive_series):
-        """Apply SMOTE strategy."""
-        try:
-            X_resampled, y_resampled = apply_smote(X_train, y_train)
-
-            # Clone model and fit with resampled data
-            if isinstance(self.model, Pipeline):
-                model_copy = self.model
-                model_copy.fit(X_resampled, y_resampled)
-            else:
-                from sklearn.base import clone
-
-                model_copy = clone(self.model)
-                model_copy.fit(X_resampled, y_resampled)
-
-            return model_copy
-        except Exception as e:
-            logger.error(f"SMOTE strategy failed: {e}")
-            raise
+        """DEPRECATED: Use orchestrator instead."""
+        raise NotImplementedError("Use orchestrator.run_strategy() instead")
 
     @staticmethod
     def select_best_strategy(

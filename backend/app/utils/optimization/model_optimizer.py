@@ -22,10 +22,7 @@ try:
 except ImportError:
     OPTUNA_AVAILABLE = False
 
-from app.utils.fairness_metrics import (
-    demographic_parity_difference,
-    equal_opportunity_difference,
-)
+from app.utils.fairness.evaluation_engine import compute_fairness_metrics
 
 
 class FairnessAwareOptimizer:
@@ -92,70 +89,29 @@ class FairnessAwareOptimizer:
         self.trial_history = []
 
     def _compute_fairness_score(
-        self, y_true: np.ndarray, y_pred: np.ndarray, sensitive_attr: np.ndarray
-    ) -> Tuple[float, Dict[str, float]]:
+        self, y_true: np.ndarray, y_pred: np.ndarray, sensitive_df: pd.DataFrame
+    ) -> Tuple[float, Dict[str, Any]]:
         """
-        Compute fairness score based on DPD and EOD.
-
-        Args:
-            y_true: True labels
-            y_pred: Predicted labels
-            sensitive_attr: Sensitive attribute values
-
-        Returns:
-            (fairness_score, metrics_dict)
+        Compute fairness score using the centralized evaluation engine.
         """
-
-        # Handle edge case: all same class in predictions
-        if len(np.unique(y_pred)) < 2:
-            return 0.0, {"dpd": 1.0, "eod": 1.0, "status": "degenerate"}
-
         try:
-            # Group by sensitive attribute
-            groups = np.unique(sensitive_attr)
-
-            if len(groups) < 2:
-                # Only one group - no fairness concerns
-                return 1.0, {"dpd": 0.0, "eod": 0.0, "status": "single_group"}
-
-            # Compute selection rates per group (DPD)
-            dpd_rates = {}
-            for group in groups:
-                mask = sensitive_attr == group
-                if mask.sum() > 0:
-                    dpd_rates[group] = (y_pred[mask] == 1).mean()
-
-            # Compute TPRs per group (EOD)
-            eod_rates = {}
-            for group in groups:
-                mask = (sensitive_attr == group) & (y_true == 1)
-                if mask.sum() > 0:
-                    eod_rates[group] = (y_pred[mask] == 1).mean()
-
-            # Compute DPD and EOD
-            dpd = demographic_parity_difference(list(dpd_rates.values()))
-            eod = equal_opportunity_difference(list(eod_rates.values()))
-
-            # Fairness score: 1 - (|DPD| + |EOD|) / 2
-            # Higher is better (1.0 = perfectly fair)
-            fairness_score = 1.0 - (abs(dpd) + abs(eod)) / 2
-
-            # Clamp to [0, 1]
-            fairness_score = np.clip(fairness_score, 0.0, 1.0)
+            metrics = compute_fairness_metrics(y_true, y_pred, sensitive_df)
+            fairness_score = metrics["aggregate"]["fairness_score"]
+            dpd = metrics["aggregate"]["dpd"]
+            eod = metrics["aggregate"]["eod"]
 
             return fairness_score, {
                 "dpd": round(dpd, 4),
                 "eod": round(eod, 4),
                 "status": "computed",
+                "by_attribute": metrics.get("by_attribute", {})
             }
-
         except Exception as e:
-            # Fallback: if fairness computation fails, return neutral score
             print(f"Warning: Fairness computation failed: {str(e)}")
             return 0.5, {"dpd": None, "eod": None, "status": f"error: {str(e)}"}
 
     def _compute_combined_score(
-        self, y_true: np.ndarray, y_pred: np.ndarray, sensitive_attr: np.ndarray
+        self, y_true: np.ndarray, y_pred: np.ndarray, sensitive_df: pd.DataFrame
     ) -> Tuple[float, Dict[str, Any]]:
         """
         Compute combined accuracy + fairness score.
@@ -174,7 +130,7 @@ class FairnessAwareOptimizer:
 
         # Fairness
         fairness_score, fairness_metrics = self._compute_fairness_score(
-            y_true, y_pred, sensitive_attr
+            y_true, y_pred, sensitive_df
         )
 
         # Combined (weighted)
@@ -232,28 +188,37 @@ class FairnessAwareOptimizer:
         # Get best model predictions on test set
         best_model = grid_search.best_estimator_
         y_pred = best_model.predict(self.X_test)
-        sensitive_attr = self.sensitive_test.iloc[:, 0].values
+        sensitive_attr = self.sensitive_test
 
         _, test_metrics = self._compute_combined_score(
             self.y_test, y_pred, sensitive_attr
         )
 
-        # Collect trial history
-        self.trial_history = [
-            {
+        # Reconstruct trial history by evaluating each parameter combo on the test set
+        self.trial_history = []
+        for params in grid_search.cv_results_["params"]:
+            from sklearn.base import clone
+            trial_model = clone(self.model)
+            if hasattr(trial_model, "steps"):
+                step_name = trial_model.steps[-1][0]
+                params_to_set = {f"{step_name}__{k}": v for k, v in params.items() if not k.startswith(f"{step_name}__")}
+                params_to_set.update({k: v for k, v in params.items() if k.startswith(f"{step_name}__")})
+                trial_model.set_params(**params_to_set)
+            else:
+                trial_model.set_params(**params)
+            
+            trial_model.fit(self.X_train, self.y_train)
+            trial_y_pred = trial_model.predict(self.X_test)
+            combined, t_metrics = self._compute_combined_score(self.y_test, trial_y_pred, self.sensitive_test)
+            
+            self.trial_history.append({
                 "params": dict(params),
-                "cv_score": float(score),
-                "mean_test_accuracy": round(
-                    accuracy_score(self.y_test, best_model.predict(self.X_test)), 4
-                ),
-                "fairness_score": test_metrics.get("fairness_score", 0.0),
-                "combined_score": test_metrics.get("combined_score", 0.0),
-            }
-            for params, score in zip(
-                grid_search.cv_results_["params"],
-                grid_search.cv_results_["mean_test_score"],
-            )
-        ]
+                "accuracy": t_metrics["accuracy"],
+                "fairness_score": t_metrics["fairness_score"],
+                "combined_score": t_metrics["combined_score"],
+                "dpd": t_metrics.get("dpd"),
+                "eod": t_metrics.get("eod"),
+            })
 
         return {
             "best_params": dict(grid_search.best_params_),
@@ -340,7 +305,7 @@ class FairnessAwareOptimizer:
 
                 # Evaluate on test set
                 y_pred = model.predict(self.X_test)
-                sensitive_attr = self.sensitive_test.iloc[:, 0].values
+                sensitive_attr = self.sensitive_test
 
                 # Compute combined score
                 combined, metrics = self._compute_combined_score(

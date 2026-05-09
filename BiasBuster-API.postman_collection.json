@@ -1,0 +1,826 @@
+{
+  "info": {
+    "_postman_id": "biasbuster-api-collection",
+    "name": "BiasBuster API",
+    "description": "Complete API collection for BiasBuster - AI Bias Detection and Mitigation System",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "Health Check",
+      "item": [
+        {
+          "name": "Health Status",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "http://localhost:8000/health",
+              "protocol": "http",
+              "host": ["localhost"],
+              "port": "8000",
+              "path": ["health"]
+            },
+            "description": "Check API health status"
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Upload",
+      "item": [
+        {
+          "name": "Upload Dataset and Model",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "dataset_file",
+                  "type": "file",
+                  "src": "/path/to/dataset.csv",
+                  "description": "CSV file containing your dataset"
+                },
+                {
+                  "key": "model_file",
+                  "type": "file",
+                  "src": "/path/to/model.joblib",
+                  "description": "Trained model file (.pkl or .joblib)"
+                }
+              ]
+            },
+            "url": {
+              "raw": "http://localhost:8000/api/upload",
+              "protocol": "http",
+              "host": ["localhost"],
+              "port": "8000",
+              "path": ["api", "upload"]
+            },
+            "description": "Upload a dataset and model for analysis"
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Bias Detection",
+      "item": [
+        {
+          "name": "Detect Bias",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"upload_id\": 1,\n  \"target_column\": \"income\",\n  \"sensitive_columns\": [\"gender\", \"race\"]\n}"
+            },
+            "url": {
+              "raw": "http://localhost:8000/api/bias/detect",
+              "protocol": "http",
+              "host": ["localhost"],
+              "port": "8000",
+              "path": ["api", "bias", "detect"]
+            },
+            "description": "Detect bias in your model predictions"
+          },
+          "response": []
+        },
+        {
+          "name": "Recommend Mitigation Strategy",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"upload_id\": 1,\n  \"target_column\": \"income\",\n  \"sensitive_columns\": [\"gender\", \"race\"]\n}"
+            },
+            "url": {
+              "raw": "http://localhost:8000/api/bias/recommend-strategy",
+              "protocol": "http",
+              "host": ["localhost"],
+              "port": "8000",
+              "path": ["api", "bias", "recommend-strategy"]
+            },
+            "description": "Get a pipeline-aware recommendation computed from the uploaded dataset and model"
+          },
+          "response": []
+        },
+        {
+          "name": "Rank Mitigation Strategies",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"upload_id\": 1,\n  \"target_column\": \"income\",\n  \"sensitive_columns\": [\"gender\", \"race\"]\n}"
+            },
+            "url": {
+              "raw": "http://localhost:8000/api/bias/mitigation/rank",
+              "protocol": "http",
+              "host": ["localhost"],
+              "port": "8000",
+              "path": ["api", "bias", "mitigation", "rank"]
+            },
+            "description": "Run all mitigation strategies, then rank them using actual mitigation outputs"
+          },
+          "response": []
+        },
+        {
+          "name": "Correct Bias",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"upload_id\": 1,\n  \"target_column\": \"income\",\n  \"sensitive_columns\": [\"gender\", \"race\"],\n  \"strategy_ids\": [1, 2, 3]\n}"
+            },
+            "url": {
+              "raw": "http://localhost:8000/api/bias/correct",
+              "protocol": "http",
+              "host": ["localhost"],
+              "port": "8000",
+              "path": ["api", "bias", "correct"]
+            },
+            "description": "Apply selected bias correction/mitigation strategies"
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Bias Mitigation",
+      "item": [
+        {
+          "name": "Mitigate Bias",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"upload_id\": 1,\n  \"target_column\": \"income\",\n  \"sensitive_columns\": [\"gender\"],\n  \"strategy_name\": \"threshold\",\n  \"strategy_config\": {\n    \"grid_size\": 200\n  },\n  \"confirm_recommendation\": true\n}"
+            },
+            "url": {
+              "raw": "http://localhost:8000/api/bias/mitigate",
+              "protocol": "http",
+              "host": ["localhost"],
+              "port": "8000",
+              "path": ["api", "bias", "mitigate"]
+            },
+            "description": "Execute fully pipeline-aware bias mitigation. All metrics are computed internally from the dataset and model. Supported strategies: 'threshold', 'reweighting', 'smote'. If confirm_recommendation is false, returns confirmation_required status without executing mitigation. Returns comprehensive report with before/after metrics comparison and fairness-performance tradeoff analysis."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Data Correction",
+      "item": [
+        {
+          "name": "Run Correction Wizard",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"upload_id\": 1,\n  \"target_column\": \"income\",\n  \"sensitive_columns\": [\"gender\", \"race\"],\n  \"strategy\": \"reweighting\"\n}"
+            },
+            "url": {
+              "raw": "http://localhost:8000/api/correction/run",
+              "protocol": "http",
+              "host": ["localhost"],
+              "port": "8000",
+              "path": ["api", "correction", "run"]
+            },
+            "description": "Run the data correction wizard to apply mitigation and generate corrected dataset/model"
+          },
+          "response": []
+        },
+        {
+          "name": "Download Corrected Dataset",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "http://localhost:8000/api/correction/download-dataset/correction-id-123",
+              "protocol": "http",
+              "host": ["localhost"],
+              "port": "8000",
+              "path": [
+                "api",
+                "correction",
+                "download-dataset",
+                "correction-id-123"
+              ]
+            },
+            "description": "Download the corrected dataset as CSV"
+          },
+          "response": []
+        },
+        {
+          "name": "Download Corrected Model",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "http://localhost:8000/api/correction/download-model/correction-id-123",
+              "protocol": "http",
+              "host": ["localhost"],
+              "port": "8000",
+              "path": [
+                "api",
+                "correction",
+                "download-model",
+                "correction-id-123"
+              ]
+            },
+            "description": "Download the corrected/retrained model as joblib"
+          },
+          "response": []
+        },
+        {
+          "name": "Download Correction Report",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "http://localhost:8000/api/correction/download-report/correction-id-123",
+              "protocol": "http",
+              "host": ["localhost"],
+              "port": "8000",
+              "path": [
+                "api",
+                "correction",
+                "download-report",
+                "correction-id-123"
+              ]
+            },
+            "description": "Download the correction report as JSON"
+          },
+          "response": []
+        },
+        {
+          "name": "Get Correction Record",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "http://localhost:8000/api/correction/get/correction-id-123",
+              "protocol": "http",
+              "host": ["localhost"],
+              "port": "8000",
+              "path": ["api", "correction", "get", "correction-id-123"]
+            },
+            "description": "Get details of a specific correction record"
+          },
+          "response": []
+        },
+        {
+          "name": "Get Correction History",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "http://localhost:8000/api/correction/history?upload_id=1",
+              "protocol": "http",
+              "host": ["localhost"],
+              "port": "8000",
+              "path": ["api", "correction", "history"],
+              "query": [
+                {
+                  "key": "upload_id",
+                  "value": "1"
+                }
+              ]
+            },
+            "description": "Get correction history for a specific upload"
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Model Optimization",
+      "item": [
+        {
+          "name": "Optimize Model (Optuna)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"upload_id\": 1,\n  \"target_column\": \"income\",\n  \"sensitive_columns\": [\"gender\", \"race\"],\n  \"method\": \"optuna\",\n  \"n_trials\": 30,\n  \"accuracy_weight\": 0.6,\n  \"fairness_weight\": 0.4\n}"
+            },
+            "url": {
+              "raw": "http://localhost:8000/api/optimize",
+              "protocol": "http",
+              "host": ["localhost"],
+              "port": "8000",
+              "path": ["api", "optimize"]
+            },
+            "description": "Optimize model hyperparameters using Optuna for fairness-accuracy trade-off"
+          },
+          "response": []
+        },
+        {
+          "name": "Optimize Model (GridSearch)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"upload_id\": 1,\n  \"target_column\": \"income\",\n  \"sensitive_columns\": [\"gender\", \"race\"],\n  \"method\": \"gridsearch\",\n  \"cv_folds\": 5,\n  \"accuracy_weight\": 0.6,\n  \"fairness_weight\": 0.4\n}"
+            },
+            "url": {
+              "raw": "http://localhost:8000/api/optimize",
+              "protocol": "http",
+              "host": ["localhost"],
+              "port": "8000",
+              "path": ["api", "optimize"]
+            },
+            "description": "Optimize model hyperparameters using GridSearchCV"
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Experiments",
+      "item": [
+        {
+          "name": "Run Experiments",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"upload_id\": 1,\n  \"target_column\": \"income\",\n  \"sensitive_columns\": [\"gender\", \"race\"],\n  \"strategies\": [\"threshold\", \"reweighting\", \"smote\"],\n  \"timeout_per_strategy\": 300\n}"
+            },
+            "url": {
+              "raw": "http://localhost:8000/api/experiments/run",
+              "protocol": "http",
+              "host": ["localhost"],
+              "port": "8000",
+              "path": ["api", "experiments", "run"]
+            },
+            "description": "Run full auto experimentation pipeline testing all mitigation strategies"
+          },
+          "response": []
+        },
+        {
+          "name": "Get Experiments History",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "http://localhost:8000/api/experiments/history?upload_id=1&limit=10&offset=0",
+              "protocol": "http",
+              "host": ["localhost"],
+              "port": "8000",
+              "path": ["api", "experiments", "history"],
+              "query": [
+                {
+                  "key": "upload_id",
+                  "value": "1"
+                },
+                {
+                  "key": "limit",
+                  "value": "10"
+                },
+                {
+                  "key": "offset",
+                  "value": "0"
+                }
+              ]
+            },
+            "description": "Get experiment history with optional filtering and pagination"
+          },
+          "response": []
+        },
+        {
+          "name": "Get Experiment Details",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "http://localhost:8000/api/experiments/experiment-id-123",
+              "protocol": "http",
+              "host": ["localhost"],
+              "port": "8000",
+              "path": ["api", "experiments", "experiment-id-123"]
+            },
+            "description": "Get detailed report for a specific experiment"
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Bias Explainability",
+      "item": [
+        {
+          "name": "Explain Bias",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"upload_id\": 1,\n  \"target_column\": \"income\",\n  \"sensitive_columns\": [\"gender\", \"race\"]\n}"
+            },
+            "url": {
+              "raw": "http://localhost:8000/api/explain/bias",
+              "protocol": "http",
+              "host": ["localhost"],
+              "port": "8000",
+              "path": ["api", "explain", "bias"]
+            },
+            "description": "Generate detailed explanation of WHY bias occurs in the model"
+          },
+          "response": []
+        },
+        {
+          "name": "Debug Explain Bias",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"upload_id\": 1,\n  \"target_column\": \"income\",\n  \"sensitive_columns\": [\"gender\", \"race\"]\n}"
+            },
+            "url": {
+              "raw": "http://localhost:8000/api/explain/debug",
+              "protocol": "http",
+              "host": ["localhost"],
+              "port": "8000",
+              "path": ["api", "explain", "debug"]
+            },
+            "description": "Debug version of bias explanation returning raw dict with additional analysis"
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Model Retraining",
+      "item": [
+        {
+          "name": "Run Retraining",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"upload_id\": 1,\n  \"target_column\": \"income\",\n  \"sensitive_columns\": [\"gender\", \"race\"],\n  \"strategy\": \"reweighting\",\n  \"train_additional_models\": true\n}"
+            },
+            "url": {
+              "raw": "http://localhost:8000/api/retraining/run",
+              "protocol": "http",
+              "host": ["localhost"],
+              "port": "8000",
+              "path": ["api", "retraining", "run"]
+            },
+            "description": "Retrain model with selected bias mitigation strategy"
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Model Registry & Governance",
+      "item": [
+        {
+          "name": "Register Model",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"upload_id\": 1,\n  \"model_name\": \"optimized_logistic_regression_optuna\",\n  \"model_type\": \"LogisticRegression\",\n  \"source_type\": \"optimized\",\n  \"parent_model_id\": null,\n  \"optimization_method\": \"optuna\",\n  \"artifact_path\": \"artifacts/optimized_models/optimized_abc123.joblib\",\n  \"artifact_size_bytes\": 45678,\n  \"performance_metrics\": {\n    \"accuracy\": 0.85,\n    \"precision\": 0.83,\n    \"recall\": 0.82,\n    \"f1\": 0.825,\n    \"roc_auc\": 0.89\n  },\n  \"fairness_metrics\": {\n    \"fairness_score\": 0.78,\n    \"dpd\": 0.05,\n    \"eod\": 0.08,\n    \"dir\": 0.92\n  },\n  \"operational_metrics\": {\n    \"model_size_bytes\": 45678\n  },\n  \"combined_score\": 0.82,\n  \"version\": \"v2_optimized\",\n  \"tags\": [\"production\", \"optimized\"],\n  \"notes\": \"Optimized with Optuna for 20 trials\",\n  \"experiment_id\": \"exp-123\",\n  \"parameters\": {\n    \"C\": 1.5,\n    \"max_iter\": 300\n  }\n}"
+            },
+            "url": {
+              "raw": "http://localhost:8000/api/models/register",
+              "protocol": "http",
+              "host": ["localhost"],
+              "port": "8000",
+              "path": ["api", "models", "register"]
+            },
+            "description": "Register a model in the centralized Model Registry"
+          },
+          "response": []
+        },
+        {
+          "name": "Get Model by ID",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "http://localhost:8000/api/models/model/{{model_id}}",
+              "protocol": "http",
+              "host": ["localhost"],
+              "port": "8000",
+              "path": ["api", "models", "model", "{{model_id}}"]
+            },
+            "description": "Retrieve a specific model from registry by ID"
+          },
+          "response": []
+        },
+        {
+          "name": "Get All Models for Upload",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "http://localhost:8000/api/models/upload/{{upload_id}}",
+              "protocol": "http",
+              "host": ["localhost"],
+              "port": "8000",
+              "path": ["api", "models", "upload", "{{upload_id}}"]
+            },
+            "description": "Get all models registered for a specific upload/dataset"
+          },
+          "response": []
+        },
+        {
+          "name": "Compare Models",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "http://localhost:8000/api/models/compare/{{upload_id}}",
+              "protocol": "http",
+              "host": ["localhost"],
+              "port": "8000",
+              "path": ["api", "models", "compare", "{{upload_id}}"]
+            },
+            "description": "Compare all models for a given upload and extract insights. Returns best models by accuracy, fairness, and balance"
+          },
+          "response": []
+        },
+        {
+          "name": "Recommend Model (Balanced)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "http://localhost:8000/api/models/recommend/{{upload_id}}?goal=balanced",
+              "protocol": "http",
+              "host": ["localhost"],
+              "port": "8000",
+              "path": ["api", "models", "recommend", "{{upload_id}}"],
+              "query": [
+                {
+                  "key": "goal",
+                  "value": "balanced",
+                  "description": "Goal: accuracy, fairness, balanced, or production"
+                }
+              ]
+            },
+            "description": "Get AI-powered model recommendation based on user goals. Goals: accuracy, fairness, balanced, production"
+          },
+          "response": []
+        },
+        {
+          "name": "Recommend Model (Accuracy)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "http://localhost:8000/api/models/recommend/{{upload_id}}?goal=accuracy",
+              "protocol": "http",
+              "host": ["localhost"],
+              "port": "8000",
+              "path": ["api", "models", "recommend", "{{upload_id}}"],
+              "query": [
+                {
+                  "key": "goal",
+                  "value": "accuracy"
+                }
+              ]
+            },
+            "description": "Recommend highest accuracy model"
+          },
+          "response": []
+        },
+        {
+          "name": "Recommend Model (Fairness)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "http://localhost:8000/api/models/recommend/{{upload_id}}?goal=fairness",
+              "protocol": "http",
+              "host": ["localhost"],
+              "port": "8000",
+              "path": ["api", "models", "recommend", "{{upload_id}}"],
+              "query": [
+                {
+                  "key": "goal",
+                  "value": "fairness"
+                }
+              ]
+            },
+            "description": "Recommend highest fairness model"
+          },
+          "response": []
+        },
+        {
+          "name": "Recommend Model (Production)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "http://localhost:8000/api/models/recommend/{{upload_id}}?goal=production",
+              "protocol": "http",
+              "host": ["localhost"],
+              "port": "8000",
+              "path": ["api", "models", "recommend", "{{upload_id}}"],
+              "query": [
+                {
+                  "key": "goal",
+                  "value": "production"
+                }
+              ]
+            },
+            "description": "Recommend most stable model for production (prefers retrained/corrected models)"
+          },
+          "response": []
+        },
+        {
+          "name": "Get Model Lineage",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "http://localhost:8000/api/models/lineage/{{model_id}}",
+              "protocol": "http",
+              "host": ["localhost"],
+              "port": "8000",
+              "path": ["api", "models", "lineage", "{{model_id}}"]
+            },
+            "description": "Get complete lineage/version history of a model tree. Shows transformation journey: original → optimized → mitigated → retrained"
+          },
+          "response": []
+        },
+        {
+          "name": "Toggle Model Favorite",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "http://localhost:8000/api/models/favorite/{{model_id}}",
+              "protocol": "http",
+              "host": ["localhost"],
+              "port": "8000",
+              "path": ["api", "models", "favorite", "{{model_id}}"]
+            },
+            "description": "Mark a model as favorite for quick access"
+          },
+          "response": []
+        },
+        {
+          "name": "Add Model Notes",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "http://localhost:8000/api/models/notes/{{model_id}}?notes=This%20model%20achieved%20best%20fairness%20balance",
+              "protocol": "http",
+              "host": ["localhost"],
+              "port": "8000",
+              "path": ["api", "models", "notes", "{{model_id}}"],
+              "query": [
+                {
+                  "key": "notes",
+                  "value": "This model achieved best fairness balance"
+                }
+              ]
+            },
+            "description": "Add or update notes for a model"
+          },
+          "response": []
+        },
+        {
+          "name": "Download Model",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "http://localhost:8000/api/models/download/{{model_id}}",
+              "protocol": "http",
+              "host": ["localhost"],
+              "port": "8000",
+              "path": ["api", "models", "download", "{{model_id}}"]
+            },
+            "description": "Download a model artifact as .joblib file"
+          },
+          "response": []
+        },
+        {
+          "name": "Get Registry Summary",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "http://localhost:8000/api/models/summary/{{upload_id}}",
+              "protocol": "http",
+              "host": ["localhost"],
+              "port": "8000",
+              "path": ["api", "models", "summary", "{{upload_id}}"]
+            },
+            "description": "Get high-level summary of all models for an upload. Returns total models, source types, best metrics achieved, and recommended model"
+          },
+          "response": []
+        }
+      ]
+    }
+  ],
+  "variable": [
+    {
+      "key": "base_url",
+      "value": "http://localhost:8000",
+      "type": "string"
+    },
+    {
+      "key": "upload_id",
+      "value": "1",
+      "type": "string"
+    },
+    {
+      "key": "correction_id",
+      "value": "correction-id-123",
+      "type": "string"
+    },
+    {
+      "key": "experiment_id",
+      "value": "experiment-id-123",
+      "type": "string"
+    }
+  ]
+}

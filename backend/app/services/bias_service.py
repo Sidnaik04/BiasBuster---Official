@@ -2,6 +2,7 @@ import pandas as pd
 import numpy as np
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from typing import Any, Dict, List, Tuple
 
 from app.schemas.bias import BiasDetectRequest
 from app.models.models import UploadRecord
@@ -16,6 +17,14 @@ from app.utils.feature_encoder import encode_features_for_inference
 from app.utils.sensitive_validation import validate_sensitive_columns
 from app.utils.sensitive_preprocessing import bin_age_column
 from app.utils.bootstrap import bootstrap_ci
+from app.utils.model_validation import (
+    detect_model_type,
+    extract_model_from_dict,
+    extract_wrapped_model,
+)
+from app.utils.bias_decision import evaluate_bias
+from app.utils.mitigation.strategy_recommender import recommend_strategy
+from app.utils.fairness.evaluation_engine import evaluate_model_fairness, compute_fairness_metrics
 
 from app.utils.fairness_metrics import (
     selection_rate,
@@ -27,6 +36,128 @@ from app.utils.fairness_metrics import (
 from app.utils.bias_decision import evaluate_bias
 from fairlearn.postprocessing import ThresholdOptimizer
 from sklearn.pipeline import Pipeline
+
+
+
+
+
+async def run_strategy_recommendation(payload, session: AsyncSession):
+    record = (
+        await session.execute(
+            select(UploadRecord).where(UploadRecord.id == payload.upload_id)
+        )
+    ).scalar_one_or_none()
+
+    if not record:
+        raise ValueError("Upload record not found")
+
+    df = load_dataset(record.dataset_filename)
+    model = load_model(record.model_filename)
+
+    eval_result = evaluate_model_fairness(
+        df=df,
+        model=model,
+        target_column=payload.target_column,
+        sensitive_columns=payload.sensitive_columns,
+    )
+
+    sensitive_audit = eval_result["fairness"]["by_attribute"]
+    aggregate = eval_result["fairness"]["aggregate"]
+    diagnostics = eval_result["diagnostics"]
+    target_info = eval_result["target_info"]
+    sensitive_info = validate_sensitive_columns(df, payload.sensitive_columns)
+
+    prepared = {
+        "computed_metrics": {
+            "dpd": round(aggregate["dpd"], 4),
+            "eod": round(aggregate["eod"], 4),
+            "di": round(aggregate["dir"], 4),
+            "fairness_score": round(aggregate["fairness_score"], 4),
+        },
+        "dataset_analysis": {
+            "prediction_skew": round(
+                abs(
+                    (sum(diagnostics["prediction_distribution"].values()) and diagnostics["prediction_distribution"].get(1, 0)
+                     / max(1, sum(diagnostics["prediction_distribution"].values())))
+                    - 0.5
+                )
+                * 2,
+                4,
+            ),
+            "imbalance_ratio": 0.0,
+            "sensitive_attribute_count": len(eval_result["sensitive_columns"]),
+            "dataset_size": int(diagnostics["dataset_shape"][0]),
+        },
+        "recommendation_input": {
+            "bias_present": (
+                aggregate["dpd"] > 0.10
+                or aggregate["eod"] > 0.10
+                or aggregate["dir"] < 0.80
+            ),
+            "sensitive_audit": {
+                attr: {
+                    **values,
+                    "biased": (
+                        abs(values["dpd"]) > 0.10
+                        or abs(values["eod"]) > 0.10
+                        or values["dir"] < 0.80
+                    ),
+                    "severity_score": evaluate_bias(
+                        values["dpd"],
+                        values["eod"],
+                        values["dir"],
+                    )["severity_score"],
+                    "violations": evaluate_bias(
+                        values["dpd"],
+                        values["eod"],
+                        values["dir"],
+                    )["violations"],
+                }
+                for attr, values in sensitive_audit.items()
+            },
+            "dataset_health": {
+                "rows": int(diagnostics["dataset_shape"][0]),
+                "columns": int(diagnostics["dataset_shape"][1]),
+                "target_distribution": {
+                    str(k): int(v)
+                    for k, v in diagnostics["target_distribution"].items()
+                },
+            },
+            "dataset_analysis": {
+                "prediction_skew": round(
+                    abs(
+                        (sum(diagnostics["prediction_distribution"].values()) and diagnostics["prediction_distribution"].get(1, 0)
+                         / max(1, sum(diagnostics["prediction_distribution"].values())))
+                        - 0.5
+                    )
+                    * 2,
+                    4,
+                ),
+                "imbalance_ratio": 0.0,
+                "sensitive_attribute_count": len(eval_result["sensitive_columns"]),
+                "dataset_size": int(diagnostics["dataset_shape"][0]),
+            },
+            "model_info": {
+                "model_type": detect_model_type(model),
+                "supports_proba": hasattr(model, "predict_proba"),
+            },
+            "warnings": list(eval_result.get("warnings", [])),
+        },
+    }
+    recommendation = recommend_strategy(
+        {
+            **prepared["recommendation_input"],
+            "target_info": target_info,
+            "sensitive_info": sensitive_info,
+        }
+    )
+
+    return {
+        "status": "success",
+        "computed_metrics": prepared["computed_metrics"],
+        "dataset_analysis": prepared["dataset_analysis"],
+        "recommendation": recommendation,
+    }
 
 
 async def run_bias_detection(
@@ -76,129 +207,43 @@ async def run_bias_detection(
     dataset_health = validate_dataset_health(df)
 
     # -------------------------------------------------
-    # STEP 4: Target validation & encoding
+    # STEP 4-7: Centralized model fairness evaluation
     # -------------------------------------------------
-    df, target_info = encode_target_column(df, payload.target_column)
+    eval_result = evaluate_model_fairness(
+        df=df,
+        model=model,
+        target_column=payload.target_column,
+        sensitive_columns=payload.sensitive_columns,
+    )
 
-    # -------------------------------------------------
-    # STEP 5: Sensitive attribute validation
-    # -------------------------------------------------
+    target_info = eval_result["target_info"]
     sensitive_info = validate_sensitive_columns(df, payload.sensitive_columns)
-
-    for col in payload.sensitive_columns:
-        if col.lower() == "age":
-            df = bin_age_column(df, col)
-            payload.sensitive_columns = [
-                c if c != col else col + "_group" for c in payload.sensitive_columns
-            ]
-            break
-
-    for col in payload.sensitive_columns:
-        df[col] = df[col].astype(str)
-
-    print(df[payload.sensitive_columns].dtypes)
-
-    # -------------------------------------------------
-    # STEP 6: Separate features / target & predict
-    # -------------------------------------------------
-    y_true = df[payload.target_column].astype(int)
-
-    X = df.drop(columns=[payload.target_column])
-
-    if isinstance(model, Pipeline):
-        # Pipeline handles preprocessing internally
-        X_infer = X
-    else:
-        # Fallback encoding for non-pipeline models
-        X_infer = encode_features_for_inference(X)
-
-    y_pred = predict_labels(model, X_infer)
-    y_pred = np.nan_to_num(y_pred).astype(int)
-
-    print("MODEL TYPE:", type(model))
-    print("USING PIPELINE:", isinstance(model, Pipeline))
-
-    positive_rate = y_pred.mean()
-
-    if (
-        positive_rate < (1 - settings.PREDICTION_SKEW_THRESHOLD)
-        or positive_rate > settings.PREDICTION_SKEW_THRESHOLD
-    ):
-        warnings.append(
-            "Model predictions are highly skewed towards a single class. "
-            "Fairness metrics may be misleading."
-        )
-
-    # -------------------------------------------------
-    # STEP 7: Fairness metric computation
-    # -------------------------------------------------
     audit_results = {}
-    warnings = []
+    warnings = list(eval_result.get("warnings", []))
     bias_driver = None
     max_severity = 0
-    total_rows = len(df)
 
-    for sensitive in payload.sensitive_columns:
-        group_rates = {}
-        group_tprs = {}
-
-        group_counts = df[sensitive].value_counts(dropna=False).to_dict()
-
-        for group, count in group_counts.items():
-            # ---------------------------
-            # Warning: Low sample size
-            # ---------------------------
-            if count < settings.MIN_GROUP_SIZE:
-                warnings.append(
-                    f"Group '{group}' in sensitive attribute '{sensitive}' "
-                    f"has low sample size ({count} samples). "
-                    "Fairness metrics may be unstable."
-                )
-
-            # ---------------------------
-            # Warning: Group imbalance
-            # ---------------------------
-            proportion = count / total_rows
-            if proportion < settings.MIN_GROUP_PROPORTION:
-                warnings.append(
-                    f"Group '{group}' in sensitive attribute '{sensitive}' "
-                    f"represents only {proportion:.2%} of the dataset."
-                )
-
-            mask = df[sensitive] == group
-            y_g = y_true[mask]
-            y_p = y_pred[mask]
-
-            if len(y_g) == 0:
-                continue
-
-            group_rates[str(group)] = selection_rate(y_p)
-            group_tprs[str(group)] = true_positive_rate(y_g, y_p)
-
-        dpd = demographic_parity_difference(group_rates)
-        eod = equal_opportunity_difference(group_tprs)
-        dir_ratio = disparate_impact_ratio(group_rates)
-
-        decision = evaluate_bias(dpd, eod, dir_ratio)
-
+    for sensitive, values in eval_result["fairness"]["by_attribute"].items():
+        decision = evaluate_bias(values["dpd"], values["eod"], values["dir"])
         dpd_ci = None
         eod_ci = None
 
         if settings.ENABLE_BOOTSTRAP_CI:
             dpd_ci = bootstrap_ci(
-                list(group_rates.values()), n_bootstrap=settings.BOOTSTRAP_SAMPLES
+                list(values["selection_rate"].values()),
+                n_bootstrap=settings.BOOTSTRAP_SAMPLES,
             )
-
             eod_ci = bootstrap_ci(
-                list(group_tprs.values()), n_bootstrap=settings.BOOTSTRAP_SAMPLES
+                list(values["true_positive_rate"].values()),
+                n_bootstrap=settings.BOOTSTRAP_SAMPLES,
             )
 
         audit_results[sensitive] = {
-            "selection_rate": group_rates,
-            "true_positive_rate": group_tprs,
-            "dpd": round(dpd, 4),
-            "eod": round(eod, 4),
-            "dir": round(dir_ratio, 4),
+            "selection_rate": values["selection_rate"],
+            "true_positive_rate": values["true_positive_rate"],
+            "dpd": round(values["dpd"], 4),
+            "eod": round(values["eod"], 4),
+            "dir": round(values["dir"], 4),
             "dpd_ci": dpd_ci,
             "eod_ci": eod_ci,
             "biased": decision["bias_present"],
@@ -218,6 +263,15 @@ async def run_bias_detection(
         "dataset_health": dataset_health,
         "target_info": target_info,
         "sensitive_attributes": sensitive_info,
+        "computed_metrics": {
+            "dpd": round(eval_result["fairness"]["aggregate"]["dpd"], 4),
+            "eod": round(eval_result["fairness"]["aggregate"]["eod"], 4),
+            "di": round(eval_result["fairness"]["aggregate"]["dir"], 4),
+            "fairness_score": round(
+                eval_result["fairness"]["aggregate"]["fairness_score"],
+                4,
+            ),
+        },
         "bias_present": max_severity > 0,
         "bias_driver": bias_driver,
         "bias_severity_score": max_severity,
@@ -251,55 +305,34 @@ async def apply_bias_correction(payload, session: AsyncSession):
     df = load_dataset(record.dataset_filename)
     model = load_model(record.model_filename)
 
-    # Target validation & encoding
-    df, target_info = encode_target_column(df, payload.target_column)
-    y_true = df[payload.target_column].astype(int)
-    X = df.drop(columns=[payload.target_column])
+    baseline_eval = evaluate_model_fairness(
+        df=df,
+        model=model,
+        target_column=payload.target_column,
+        sensitive_columns=payload.sensitive_columns,
+    )
 
-    # Sensitive attribute validation
-    for col in payload.sensitive_columns:
-        if col.lower() == "age":
-            df = bin_age_column(df, col)
-            payload.sensitive_columns = [
-                c if c != col else col + "_group" for c in payload.sensitive_columns
-            ]
-            break
+    baseline_metrics = {
+        attr: {
+            "dpd": vals["dpd"],
+            "eod": vals["eod"],
+            "dir": vals["dir"],
+        }
+        for attr, vals in baseline_eval["fairness"]["by_attribute"].items()
+    }
 
-    for col in payload.sensitive_columns:
-        df[col] = df[col].astype(str)
-
-    # Get predictions
+    # Prepare inputs used by correction stubs.
+    encoded_df, _ = encode_target_column(df.copy(), payload.target_column)
+    y_true = encoded_df[payload.target_column].astype(int)
+    X = encoded_df.drop(columns=[payload.target_column])
     if isinstance(model, Pipeline):
         X_infer = X
     else:
         X_infer = encode_features_for_inference(X)
-
     y_pred = predict_labels(model, X_infer)
     y_pred = np.nan_to_num(y_pred).astype(int)
 
-    # Calculate baseline fairness metrics
-    baseline_metrics = {}
-    for sensitive in payload.sensitive_columns:
-        group_rates = {}
-        group_tprs = {}
-        group_counts = df[sensitive].value_counts(dropna=False).to_dict()
-
-        for group, count in group_counts.items():
-            mask = df[sensitive] == group
-            y_g = y_true[mask]
-            y_p = y_pred[mask]
-
-            if len(y_g) == 0:
-                continue
-
-            group_rates[str(group)] = selection_rate(y_p)
-            group_tprs[str(group)] = true_positive_rate(y_g, y_p)
-
-        baseline_metrics[sensitive] = {
-            "dpd": demographic_parity_difference(group_rates),
-            "eod": equal_opportunity_difference(group_tprs),
-            "dir": disparate_impact_ratio(group_rates),
-        }
+    sensitive_columns = list(baseline_eval["fairness"]["by_attribute"].keys())
 
     # Apply strategies and evaluate
     correction_results = []
@@ -328,44 +361,22 @@ async def apply_bias_correction(payload, session: AsyncSession):
         else:
             continue
 
-        # Calculate corrected metrics
-        corrected_metrics = {}
-        fairness_improvement = 0
+        # Reuse centralized fairness engine with corrected predictions.
+        temp_df = encoded_df.copy()
+        for sensitive in sensitive_columns:
+            if sensitive in temp_df.columns:
+                temp_df[sensitive] = temp_df[sensitive].astype(str)
 
-        for sensitive in payload.sensitive_columns:
-            group_rates = {}
-            group_tprs = {}
-
-            for group in df[sensitive].unique():
-                mask = df[sensitive] == str(group)
-                y_g = y_true[mask]
-                y_p = corrected_y_pred[mask]
-
-                if len(y_g) == 0:
-                    continue
-
-                group_rates[str(group)] = selection_rate(y_p)
-                group_tprs[str(group)] = true_positive_rate(y_g, y_p)
-
-            corrected_metrics[sensitive] = {
-                "dpd": demographic_parity_difference(group_rates),
-                "eod": equal_opportunity_difference(group_tprs),
-                "dir": disparate_impact_ratio(group_rates),
-            }
-
-            # Calculate improvement
-            baseline_dpd = baseline_metrics[sensitive]["dpd"]
-            corrected_dpd = corrected_metrics[sensitive]["dpd"]
-            fairness_improvement += abs(baseline_dpd - corrected_dpd)
-
-        original_fairness_score = np.mean([m["dpd"] for m in baseline_metrics.values()])
-        corrected_fairness_score = np.mean(
-            [m["dpd"] for m in corrected_metrics.values()]
+        fairness_result = compute_fairness_metrics(
+            np.asarray(y_true),
+            np.asarray(corrected_y_pred),
+            temp_df[sensitive_columns]
         )
-        improvement_pct = (
-            (original_fairness_score - corrected_fairness_score)
-            / (original_fairness_score + 1e-6)
-        ) * 100
+        corrected_metrics = fairness_result["by_attribute"]
+
+        original_fairness_score = baseline_eval["fairness"]["aggregate"]["fairness_score"]
+        corrected_fairness_score = fairness_result["aggregate"]["fairness_score"]
+        improvement_pct = max(0.0, (corrected_fairness_score - original_fairness_score) / max(original_fairness_score, 1e-6)) * 100
 
         result = {
             "strategy_id": strategy_id,
@@ -374,11 +385,11 @@ async def apply_bias_correction(payload, session: AsyncSession):
             "corrected_fairness_score": round(corrected_fairness_score, 4),
             "improvement": round(improvement_pct, 2),
             "metrics_before": {
-                k: {kk: round(vv, 4) for kk, vv in v.items()}
-                for k, v in baseline_metrics.items()
+                k: {kk: round(vv, 4) for kk, vv in v.items() if kk in ["dpd", "eod", "dir"]}
+                for k, v in baseline_eval["fairness"]["by_attribute"].items()
             },
             "metrics_after": {
-                k: {kk: round(vv, 4) for kk, vv in v.items()}
+                k: {kk: round(vv, 4) for kk, vv in v.items() if kk in ["dpd", "eod", "dir"]}
                 for k, v in corrected_metrics.items()
             },
             "recommendation": "Recommended" if improvement_pct > 5 else "Consider",
